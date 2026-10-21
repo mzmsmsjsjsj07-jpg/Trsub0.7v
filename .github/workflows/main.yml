@@ -1,0 +1,73 @@
+name: Build Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Unzip project if needed
+        run: |
+          if [ -z "$(find . -name settings.gradle | head -1)" ]; then
+            Z=$(ls ./*.zip 2>/dev/null | head -1)
+            if [ -n "$Z" ]; then
+              echo "Unzipping $Z"
+              mkdir -p _proj
+              unzip -q -o "$Z" -d _proj
+            else
+              echo "ERROR: no project files and no .zip file in repo"
+              ls -la
+              exit 1
+            fi
+          fi
+
+      - name: Build
+        run: |
+          S=$(find . -name settings.gradle | head -1)
+          echo "Project found at: [$S]"
+          if [ -z "$S" ]; then
+            echo "ERROR: settings.gradle not found."
+            ls -R | head -50
+            exit 1
+          fi
+          cd "$(dirname "$S")"
+          set +e
+          gradle assembleDebug --no-daemon --console=plain > build.log 2>&1
+          CODE=$?
+          set -e
+          echo "==================== RESULT: exit code $CODE ===================="
+          if [ "$CODE" -ne 0 ]; then
+            echo "==================== ERROR SUMMARY ===================="
+            grep -n -B2 -A18 "FAILURE:" build.log || tail -60 build.log
+            echo "==================== ERRORS (e: lines) ===================="
+            grep -n "^e: " build.log | head -30 || true
+          fi
+          cp build.log "$GITHUB_WORKSPACE/build.log"
+          exit $CODE
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TR-SUB-APK
+          path: '**/build/outputs/apk/debug/*.apk'
+          if-no-files-found: error
